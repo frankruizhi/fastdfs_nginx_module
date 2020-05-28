@@ -3,7 +3,7 @@
 *
 * FastDFS may be copied only under the terms of the GNU General
 * Public License V3, which may be found in the FastDFS source kit.
-* Please visit the FastDFS Home Page http://www.csource.org/ for more detail.
+* Please visit the FastDFS Home Page http://www.fastken.com/ for more detail.
 **/
 
 
@@ -18,17 +18,17 @@
 #include <limits.h>
 #include <time.h>
 #include <unistd.h>
-#include "fdfs_define.h"
-#include "logger.h"
-#include "shared_func.h"
-#include "fdfs_global.h"
-#include "sockopt.h"
-#include "http_func.h"
-#include "fdfs_http_shared.h"
-#include "fdfs_client.h"
-#include "local_ip_func.h"
-#include "fdfs_shared_func.h"
-#include "trunk_shared.h"
+#include "fastcommon/logger.h"
+#include "fastcommon/shared_func.h"
+#include "fastcommon/sockopt.h"
+#include "fastcommon/http_func.h"
+#include "fastcommon/local_ip_func.h"
+#include "fastdfs/fdfs_define.h"
+#include "fastdfs/fdfs_global.h"
+#include "fastdfs/fdfs_http_shared.h"
+#include "fastdfs/fdfs_client.h"
+#include "fastdfs/fdfs_shared_func.h"
+#include "fastdfs/trunk_shared.h"
 #include "common.h"
 
 #define FDFS_MOD_REPONSE_MODE_PROXY	'P'
@@ -347,43 +347,44 @@ int fdfs_mod_init()
 		{
 			len += snprintf(buff + len, sizeof(buff) - len, \
 				"store_path%d=%s, ", i, \
-				g_fdfs_store_paths.paths[i]);
+				g_fdfs_store_paths.paths[i].path);
 		}
 	}
 
-	logInfo("fastdfs apache / nginx module v1.15, " \
-		"response_mode=%s, " \
-		"base_path=%s, " \
-		"url_have_group_name=%d, " \
-		"%s" \
-		"connect_timeout=%d, "\
-		"network_timeout=%d, "\
-		"tracker_server_count=%d, " \
-		"if_alias_prefix=%s, " \
-		"local_host_ip_count=%d, " \
-		"anti_steal_token=%d, " \
-		"token_ttl=%ds, " \
-		"anti_steal_secret_key length=%d, "  \
-		"token_check_fail content_type=%s, " \
-		"token_check_fail buff length=%d, "  \
-		"load_fdfs_parameters_from_tracker=%d, " \
-		"storage_sync_file_max_delay=%ds, " \
-		"use_storage_id=%d, storage server id count=%d, " \
-		"flv_support=%d, flv_extension=%s", \
-		response_mode == FDFS_MOD_REPONSE_MODE_PROXY ? \
-			"proxy" : "redirect", \
-		g_fdfs_base_path, url_have_group_name, buff, \
-		g_fdfs_connect_timeout, g_fdfs_network_timeout, \
-		g_tracker_group.server_count, \
-		g_if_alias_prefix, g_local_host_ip_count, \
-		g_http_params.anti_steal_token, \
-		g_http_params.token_ttl, \
-		g_http_params.anti_steal_secret_key.length, \
-		g_http_params.token_check_fail_content_type, \
-		g_http_params.token_check_fail_buff.length, \
-		load_fdfs_parameters_from_tracker, \
-		storage_sync_file_max_delay, use_storage_id, \
-		g_storage_id_count, flv_support, flv_extension);
+	logInfo("fastdfs apache / nginx module v1.21, "
+		"response_mode=%s, "
+		"base_path=%s, "
+		"url_have_group_name=%d, "
+		"%s"
+		"connect_timeout=%d, "
+		"network_timeout=%d, "
+		"tracker_server_count=%d, "
+		"if_alias_prefix=%s, "
+		"local_host_ip_count=%d, "
+		"anti_steal_token=%d, "
+		"token_ttl=%ds, "
+		"anti_steal_secret_key length=%d, "
+		"token_check_fail content_type=%s, "
+		"token_check_fail buff length=%d, "
+		"load_fdfs_parameters_from_tracker=%d, "
+		"storage_sync_file_max_delay=%ds, "
+		"use_storage_id=%d, storage server id/ip count=%d / %d, "
+		"flv_support=%d, flv_extension=%s",
+		response_mode == FDFS_MOD_REPONSE_MODE_PROXY ?
+			"proxy" : "redirect",
+		g_fdfs_base_path, url_have_group_name, buff,
+		g_fdfs_connect_timeout, g_fdfs_network_timeout,
+		g_tracker_group.server_count,
+		g_if_alias_prefix, g_local_host_ip_count,
+		g_http_params.anti_steal_token,
+		g_http_params.token_ttl,
+		g_http_params.anti_steal_secret_key.length,
+		g_http_params.token_check_fail_content_type,
+		g_http_params.token_check_fail_buff.length,
+		load_fdfs_parameters_from_tracker,
+		storage_sync_file_max_delay, use_storage_id,
+		g_storage_ids_by_id.count, g_storage_ids_by_ip.count,
+        flv_support, flv_extension);
 
 	if (group_count > 0)
 	{
@@ -396,7 +397,7 @@ int fdfs_mod_init()
 			{
 				len += snprintf(buff + len, sizeof(buff) - len, \
 					", store_path%d=%s", i, \
-					group_store_paths[k].store_paths.paths[i]);
+					group_store_paths[k].store_paths.paths[i].path);
 			}
 
 			logInfo("group %d. group_name=%s, " \
@@ -1122,7 +1123,7 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 			{
 				snprintf(full_filename, \
 					sizeof(full_filename), "%s/data/%s", \
-					pStorePaths->paths[store_path_index], \
+					pStorePaths->paths[store_path_index].path, \
 					true_filename);
 				if (result == ENOENT)
 				{
@@ -1287,8 +1288,8 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 				close(fd);
 			}
 
-			OUTPUT_HEADERS(pContext, (&response), HTTP_BADREQUEST);
-			return HTTP_BADREQUEST;
+			OUTPUT_HEADERS(pContext, (&response), HTTP_RANGE_NOT_SATISFIABLE);
+			return HTTP_RANGE_NOT_SATISFIABLE;
 		}
 
 		if (pContext->range_count == 1)
@@ -1465,7 +1466,7 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 	{
 		full_filename_len = snprintf(full_filename, \
 				sizeof(full_filename), "%s/data/%s", \
-				pStorePaths->paths[store_path_index], \
+				pStorePaths->paths[store_path_index].path, \
 				true_filename);
 		file_offset = pContext->ranges[0].start;
 	}
