@@ -459,47 +459,6 @@ static int fdfs_send_range_subheader(struct fdfs_http_context *pContext,
     return pContext->send_reply_chunk(pContext->arg, false, buff, len);
 }
 
-static int fdfs_send_boundary(struct fdfs_http_context *pContext,
-        struct fdfs_http_response *pResponse, const bool bLast)
-{
-    int result;
-
-    if ((result=pContext->send_reply_chunk(pContext->arg,
-                    false, "\r\n--", 4)) != 0)
-    {
-        return result;
-    }
-
-    if ((result=pContext->send_reply_chunk(pContext->arg,
-                    false, pResponse->boundary,
-                    pResponse->boundary_len)) != 0)
-    {
-        return result;
-    }
-
-    if (bLast)
-    {
-        result = pContext->send_reply_chunk(pContext->arg, true, "--\r\n", 4);
-    }
-    else
-    {
-        result = pContext->send_reply_chunk(pContext->arg, false, "\r\n", 2);
-    }
-    return result;
-}
-
-static int fdfs_send_range_subheader(struct fdfs_http_context *pContext,
-        struct fdfs_http_response *pResponse, const int index)
-{
-    char buff[256];
-    int len;
-
-    len = snprintf(buff, sizeof(buff), "%s%s\r\n%s%s\r\n\r\n",
-            FDFS_CONTENT_TYPE_TAG_STR, pResponse->range_content_type,
-            FDFS_CONTENT_RANGE_TAG_STR, pResponse->content_ranges[index].content);
-    return pContext->send_reply_chunk(pContext->arg, false, buff, len);
-}
-
 static int fdfs_download_callback(void *arg, const int64_t file_size, \
 		const char *data, const int current_size)
 {
@@ -543,9 +502,9 @@ static int fdfs_download_callback(void *arg, const int64_t file_size, \
 	}
 
 	pCallbackArgs->sent_bytes += current_size;
-	return pCallbackArgs->pContext->send_reply_chunk( \
-		pCallbackArgs->pContext->arg, \
-		(pCallbackArgs->sent_bytes == file_size && bLast) ? 1 : 0, \
+	return pCallbackArgs->pContext->send_reply_chunk(
+		pCallbackArgs->pContext->arg,
+		(pCallbackArgs->sent_bytes == file_size && bLast) ? 1 : 0,
 		data, current_size);
 }
 
@@ -594,7 +553,7 @@ static void fdfs_do_format_content_range(const struct fdfs_http_range *range,
         range->start, range->end, file_size);
 }
 
-atic void fdfs_format_content_range(struct fdfs_http_context *pContext,
+static void fdfs_format_content_range(struct fdfs_http_context *pContext,
 	const int64_t file_size, struct fdfs_http_response *pResponse)
 {
     int i;
@@ -1280,7 +1239,7 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 	flv_header_len = 0;
 	if (pContext->if_range)
 	{
-		if (fdfs_check_and_format_range(pContext, file_size) != 0) ||
+		if (fdfs_check_and_format_range(pContext, file_size) != 0 ||
                 (pContext->range_count > 1 && !g_http_params.support_multi_range))
 		{
 			if (fd >= 0)
@@ -1345,7 +1304,7 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 						return HTTP_BADREQUEST;
 					}
 
-					ddownload_bytes = FDFS_RANGE_LENGTH(pContext->ranges[0]);
+					download_bytes = FDFS_RANGE_LENGTH(pContext->ranges[0]);
 					if (start > 0)
 					{
 						flv_header_len = sizeof(flv_header) - 1;
@@ -1471,7 +1430,6 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 		file_offset = pContext->ranges[0].start;
 	}
 
-	response.content_length = download_bytes + flv_header_len;
 	if (pContext->send_file != NULL && !bTrunkFile &&
 		!(pContext->if_range && pContext->range_count > 1))
 	{
