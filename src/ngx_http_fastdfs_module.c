@@ -228,7 +228,7 @@ static ngx_int_t fdfs_set_content_range(ngx_http_request_t *r, \
 {
     return fdfs_set_header(r, "Content-Range", "content-range", \
 		    sizeof("Content-Range") - 1, pResponse->content_ranges[0].content, \
-		    pResponse->content_range_len);			pResponse->content_ranges[0].length);
+		pResponse->content_ranges[0].length);
 }
 
 static ngx_int_t fdfs_set_accept_ranges(ngx_http_request_t *r)
