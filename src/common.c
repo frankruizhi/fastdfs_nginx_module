@@ -34,7 +34,14 @@
 #define FDFS_MOD_REPONSE_MODE_PROXY	'P'
 #define FDFS_MOD_REPONSE_MODE_REDIRECT	'R'
 
+#define FDFS_CONTENT_TYPE_TAG_STR   "Content-type: "
+#define FDFS_CONTENT_TYPE_TAG_LEN   (sizeof(FDFS_CONTENT_TYPE_TAG_STR) - 1)
+#define FDFS_CONTENT_RANGE_TAG_STR  "Content-range: "
+#define FDFS_CONTENT_RANGE_TAG_LEN  (sizeof(FDFS_CONTENT_RANGE_TAG_STR) - 1)
+
 static char  flv_header[] = "FLV\x1\x1\0\0\0\x9\0\0\0\x9";
+
+#define FDFS_RANGE_LENGTH(range) ((range.end - range.start) + 1)
 
 typedef struct tagGroupStorePaths {
 	char group_name[FDFS_GROUP_NAME_MAX_LEN + 1];
@@ -405,8 +412,10 @@ int fdfs_mod_init()
 }
 
 #define OUTPUT_HEADERS(pContext, pResponse, http_status) \
-	pResponse->status = http_status;  \
-	pContext->output_headers(pContext->arg, pResponse);
+    do { \
+        (pResponse)->status = http_status;  \
+        pContext->output_headers(pContext->arg, pResponse); \
+    } while (0)
 
 static int fdfs_download_callback(void *arg, const int64_t file_size, \
 		const char *data, const int current_size)
@@ -781,6 +790,10 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 		{
 			http_status = HTTP_NOTFOUND;
 		}
+		else if (result == EINVAL)
+		{
+			http_status = HTTP_BADREQUEST;
+                }
 		else
 		{
 			http_status = HTTP_INTERNAL_SERVER_ERROR;
