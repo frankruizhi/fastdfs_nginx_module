@@ -497,310 +497,6 @@ static int fdfs_send_file(void *arg, const char *filename, \
     }
 }
 
-static char *ngx_http_fastdfs_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
-{
-    ngx_http_core_loc_conf_t *clcf = ngx_http_conf_get_module_loc_conf(cf, \
-            ngx_http_core_module);
-
-    fprintf(stderr, "ngx_http_fastdfs_set pid=%d\n", getpid());
-
-    /* register hanlder */
-    clcf->handler = ngx_http_fastdfs_handler;
-
-    return NGX_CONF_OK;
-}
-
-static ngx_int_t ngx_http_fastdfs_process_init(ngx_cycle_t *cycle)
-{
-    int result;
-
-    fprintf(stderr, "ngx_http_fastdfs_process_init pid=%d\n", getpid());
-    // do some init here
-    if ((result=fdfs_mod_init()) != 0)
-    {
-        return NGX_ERROR;
-    }
-
-    return NGX_OK;
-}
-
-static void ngx_http_fastdfs_process_exit(ngx_cycle_t *cycle)
-{
-    fprintf(stderr, "ngx_http_fastdfs_process_exit pid=%d\n", getpid());
-    return;
-}
-
-static void *ngx_http_fastdfs_create_loc_conf(ngx_conf_t *cf)
-{
-    ngx_http_fastdfs_loc_conf_t  *conf;
-
-    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_fastdfs_loc_conf_t));
-    if (conf == NULL) {
-        return NULL;
-    }
-
-    conf->upstream.connect_timeout = NGX_CONF_UNSET_MSEC;
-    conf->upstream.send_timeout = NGX_CONF_UNSET_MSEC;
-    conf->upstream.read_timeout = NGX_CONF_UNSET_MSEC;
-
-    conf->upstream.buffer_size = NGX_CONF_UNSET_SIZE;
-
-    conf->upstream.hide_headers = NGX_CONF_UNSET_PTR;
-    conf->upstream.pass_headers = NGX_CONF_UNSET_PTR;
-
-    /* the hardcoded values */
-    conf->upstream.cyclic_temp_file = 0;
-    conf->upstream.buffering = 0;
-    conf->upstream.ignore_client_abort = 0;
-    conf->upstream.send_lowat = 0;
-    conf->upstream.bufs.num = 0;
-    conf->upstream.busy_buffers_size = 0;
-    conf->upstream.max_temp_file_size = 0;
-    conf->upstream.temp_file_write_size = 0;
-    conf->upstream.intercept_errors = 1;
-    conf->upstream.intercept_404 = 1;
-    conf->upstream.pass_request_headers = 0;
-    conf->upstream.pass_request_body = 0;
-
-    conf->headers_hash_max_size = NGX_CONF_UNSET_UINT;
-    conf->headers_hash_bucket_size = NGX_CONF_UNSET_UINT;
-
-    return conf;
-}
-
-static char * ngx_http_fastdfs_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
-{
-    ngx_hash_init_t             hash;
-    ngx_http_fastdfs_loc_conf_t *prev = parent;
-    ngx_http_fastdfs_loc_conf_t *conf = child;
-
-    ngx_conf_merge_msec_value(conf->upstream.connect_timeout,
-            prev->upstream.connect_timeout, 60000);
-
-    ngx_conf_merge_msec_value(conf->upstream.send_timeout,
-            prev->upstream.send_timeout, 60000);
-
-    ngx_conf_merge_msec_value(conf->upstream.read_timeout,
-            prev->upstream.read_timeout, 60000);
-
-    ngx_conf_merge_size_value(conf->upstream.buffer_size,
-            prev->upstream.buffer_size,
-            (size_t) ngx_pagesize);
-
-    ngx_conf_merge_bitmask_value(conf->upstream.next_upstream,
-            prev->upstream.next_upstream,
-            (NGX_CONF_BITMASK_SET
-             |NGX_HTTP_UPSTREAM_FT_ERROR
-             |NGX_HTTP_UPSTREAM_FT_TIMEOUT));
-
-    if (conf->upstream.next_upstream & NGX_HTTP_UPSTREAM_FT_OFF) {
-        conf->upstream.next_upstream = NGX_CONF_BITMASK_SET
-            |NGX_HTTP_UPSTREAM_FT_OFF;
-    }
-
-    if (conf->upstream.upstream == NULL) {
-        conf->upstream.upstream = prev->upstream.upstream;
-    }
-
-    ngx_conf_merge_uint_value(conf->headers_hash_max_size,
-            prev->headers_hash_max_size, 512);
-
-    ngx_conf_merge_uint_value(conf->headers_hash_bucket_size,
-            prev->headers_hash_bucket_size, 64);
-    conf->headers_hash_bucket_size = ngx_align(conf->headers_hash_bucket_size,
-            ngx_cacheline_size);
-
-    hash.max_size = conf->headers_hash_max_size;
-    hash.bucket_size = conf->headers_hash_bucket_size;
-    hash.name = "proxy_headers_hash";
-
-    if (ngx_http_upstream_hide_headers_hash(cf, &conf->upstream,
-                &prev->upstream, ngx_http_proxy_hide_headers, &hash)
-            != NGX_OK)
-    {
-        return NGX_CONF_ERROR;
-    }
-
-    return NGX_CONF_OK;
-}
-
-static ngx_int_t ngx_http_fastdfs_handler(ngx_http_request_t *r)
-{
-    struct fdfs_http_context context;
-    ngx_int_t rc;
-    char url[4096];
-    char *p;
-
-    if (!(r->method & (NGX_HTTP_GET | NGX_HTTP_HEAD))) {
-        return NGX_HTTP_NOT_ALLOWED;
-    }
-
-    rc = ngx_http_discard_request_body(r);
-    if (rc != NGX_OK && rc != NGX_AGAIN)
-    {
-        return rc;
-    }
-
-    if (r->uri.len + r->args.len + 1 >= sizeof(url))
-    {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                "url too long, exceeds %d bytes!", (int)sizeof(url));
-        return HTTP_BADREQUEST;
-    }
-
-    p = url;
-    memcpy(p, r->uri.data, r->uri.len);
-    p += r->uri.len;
-    if (r->args.len > 0)
-    {
-        *p++ = '?';
-        memcpy(p, r->args.data, r->args.len);
-        p += r->args.len;
-    }
-    *p = '\0';
-
-    memset(&context, 0, sizeof(context));
-    context.arg = r;
-    context.header_only = (r->method & NGX_HTTP_HEAD) ? 1 : 0;
-    context.url = url;
-    context.output_headers = fdfs_output_headers;
-    context.send_file = fdfs_send_file;
-    context.send_reply_chunk = fdfs_send_reply_chunk;
-    context.proxy_handler = ngx_http_proxy_handler;
-    context.server_port = ntohs(((struct sockaddr_in *)r->connection-> \
-                local_sockaddr)->sin_port);
-
-    if (r->headers_in.if_modified_since != NULL)
-    {
-        if (r->headers_in.if_modified_since->value.len < \
-                sizeof(context.if_modified_since))
-        {
-            memcpy(context.if_modified_since, \
-                    r->headers_in.if_modified_since->value.data, \
-                    r->headers_in.if_modified_since->value.len);
-        }
-
-        /*
-           ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
-           "if_modified_since: %s", context.if_modified_since);
-           */
-    }
-
-    if (r->headers_in.range != NULL)
-    {
-        char buff[64];
-        if (r->headers_in.range->value.len >= sizeof(buff))
-        {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
-                    "bad request, range length: %d exceeds buff " \
-                    "size: %d, range: %*s", \
-                    r->headers_in.range->value.len, \
-                    (int)sizeof(buff), \
-                    r->headers_in.range->value.len, \
-                    r->headers_in.range->value.data);
-            return NGX_HTTP_BAD_REQUEST;
-        }
-
-        memcpy(buff, r->headers_in.range->value.data, \
-                r->headers_in.range->value.len);
-        *(buff + r->headers_in.range->value.len) = '\0';
-        //ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "buff=%s", buff);
-        if (fdfs_parse_ranges(buff, &context) != 0)
-        {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
-                    "bad request, invalid range: %s", buff);
-            return NGX_HTTP_RANGE_NOT_SATISFIABLE;
-        }
-        context.if_range = true;
-
-        /*
-           ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
-           "if_range=%d, start=%d, end=%d", context.if_range, \
-           (int)context.range.start, (int)context.range.end);
-           */
-    }
-
-    /*
-       ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
-       "args=%*s, uri=%*s", r->args.len, r->args.data, \
-       r->uri.len, r->uri.data);
-       */
-
-    return fdfs_http_request_handler(&context);
-}
-
-    static int
-ngx_http_proxy_handler(ngx_http_request_t *r, const char *dest_ip_addr)
-{
-    ngx_int_t                    rc;
-    ngx_http_upstream_t         *u;
-    ngx_http_proxy_ctx_t        *ctx;
-    ngx_http_proxy_loc_conf_t   *plcf;
-
-    if (ngx_http_upstream_create(r) != NGX_OK) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_proxy_ctx_t));
-    if (ctx == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    ngx_http_set_ctx(r, ctx, ngx_http_fastdfs_module);
-
-    plcf = ngx_http_get_module_loc_conf(r, ngx_http_fastdfs_module);
-
-    u = r->upstream;
-    u->resolved = ngx_pcalloc(r->pool, sizeof(ngx_http_upstream_resolved_t));
-    if (u->resolved == NULL)
-    {
-        return NGX_ERROR;
-    }
-
-    ngx_str_set(&u->schema, "http://");
-    u->output.tag = (ngx_buf_tag_t) &ngx_http_fastdfs_module;
-
-    u->conf = &plcf->upstream;
-    strcpy(ctx->dest_ip_addr, dest_ip_addr);
-    u->resolved->host.data = (u_char *)ctx->dest_ip_addr;
-    u->resolved->host.len = strlen(ctx->dest_ip_addr);
-    u->resolved->port = (in_port_t)ntohs(((struct sockaddr_in *)r-> \
-                connection->local_sockaddr)->sin_port);
-
-    u->create_request = ngx_http_proxy_create_request;
-    u->reinit_request = ngx_http_proxy_reinit_request;
-    u->process_header = ngx_http_proxy_process_status_line;
-    u->abort_request = ngx_http_proxy_abort_request;
-    u->finalize_request = ngx_http_proxy_finalize_request;
-    r->state = 0;
-
-    u->buffering = plcf->upstream.buffering;
-
-    u->pipe = ngx_pcalloc(r->pool, sizeof(ngx_event_pipe_t));
-    if (u->pipe == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    u->pipe->input_filter = ngx_http_proxy_copy_filter;
-    u->pipe->input_ctx = r;
-
-    u->input_filter_init = ngx_http_proxy_input_filter_init;
-    u->input_filter = ngx_http_proxy_non_buffered_copy_filter;
-    u->input_filter_ctx = r;
-
-    u->accel = 1;
-
-    rc = ngx_http_read_client_request_body(r, ngx_http_upstream_init);
-
-    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "%d", rc);
-        return rc;
-    }
-
-    return NGX_DONE;
-}
-
-
     static ngx_int_t
 ngx_http_proxy_create_request(ngx_http_request_t *r)
 {
@@ -981,6 +677,23 @@ ngx_http_proxy_reinit_request(ngx_http_request_t *r)
     return NGX_OK;
 }
 
+    static void
+ngx_http_proxy_abort_request(ngx_http_request_t *r)
+{
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+            "abort http proxy request");
+
+    return;
+}
+
+    static void
+ngx_http_proxy_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
+{
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+            "finalize http proxy request");
+    return;
+}
+
     static ngx_int_t
 ngx_http_proxy_process_status_line(ngx_http_request_t *r)
 {
@@ -1058,7 +771,6 @@ ngx_http_proxy_process_status_line(ngx_http_request_t *r)
 
     return ngx_http_proxy_process_header(r);
 }
-
 
     static ngx_int_t
 ngx_http_proxy_process_header(ngx_http_request_t *r)
@@ -1212,6 +924,181 @@ ngx_http_proxy_process_header(ngx_http_request_t *r)
     }
 }
 
+    static int
+ngx_http_proxy_handler(ngx_http_request_t *r, const char *dest_ip_addr)
+{
+    ngx_int_t                    rc;
+    ngx_http_upstream_t         *u;
+    ngx_http_proxy_ctx_t        *ctx;
+    ngx_http_proxy_loc_conf_t   *plcf;
+
+    if (ngx_http_upstream_create(r) != NGX_OK) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_proxy_ctx_t));
+    if (ctx == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    ngx_http_set_ctx(r, ctx, ngx_http_fastdfs_module);
+
+    plcf = ngx_http_get_module_loc_conf(r, ngx_http_fastdfs_module);
+
+    u = r->upstream;
+    u->resolved = ngx_pcalloc(r->pool, sizeof(ngx_http_upstream_resolved_t));
+    if (u->resolved == NULL)
+    {
+        return NGX_ERROR;
+    }
+
+    ngx_str_set(&u->schema, "http://");
+    u->output.tag = (ngx_buf_tag_t) &ngx_http_fastdfs_module;
+
+    u->conf = &plcf->upstream;
+    strcpy(ctx->dest_ip_addr, dest_ip_addr);
+    u->resolved->host.data = (u_char *)ctx->dest_ip_addr;
+    u->resolved->host.len = strlen(ctx->dest_ip_addr);
+    u->resolved->port = (in_port_t)ntohs(((struct sockaddr_in *)r-> \
+                connection->local_sockaddr)->sin_port);
+
+    u->create_request = ngx_http_proxy_create_request;
+    u->reinit_request = ngx_http_proxy_reinit_request;
+    u->process_header = ngx_http_proxy_process_status_line;
+    u->abort_request = ngx_http_proxy_abort_request;
+    u->finalize_request = ngx_http_proxy_finalize_request;
+    r->state = 0;
+
+    u->buffering = plcf->upstream.buffering;
+
+    u->pipe = ngx_pcalloc(r->pool, sizeof(ngx_event_pipe_t));
+    if (u->pipe == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    u->pipe->input_filter = ngx_http_proxy_copy_filter;
+    u->pipe->input_ctx = r;
+
+    u->input_filter_init = ngx_http_proxy_input_filter_init;
+    u->input_filter = ngx_http_proxy_non_buffered_copy_filter;
+    u->input_filter_ctx = r;
+
+    u->accel = 1;
+
+    rc = ngx_http_read_client_request_body(r, ngx_http_upstream_init);
+
+    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "%d", rc);
+        return rc;
+    }
+
+    return NGX_DONE;
+}
+
+static ngx_int_t ngx_http_fastdfs_handler(ngx_http_request_t *r)
+{
+    struct fdfs_http_context context;
+    ngx_int_t rc;
+    char url[4096];
+    char *p;
+
+    if (!(r->method & (NGX_HTTP_GET | NGX_HTTP_HEAD))) {
+        return NGX_HTTP_NOT_ALLOWED;
+    }
+
+    rc = ngx_http_discard_request_body(r);
+    if (rc != NGX_OK && rc != NGX_AGAIN)
+    {
+        return rc;
+    }
+
+    if (r->uri.len + r->args.len + 1 >= sizeof(url))
+    {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                "url too long, exceeds %d bytes!", (int)sizeof(url));
+        return HTTP_BADREQUEST;
+    }
+
+    p = url;
+    memcpy(p, r->uri.data, r->uri.len);
+    p += r->uri.len;
+    if (r->args.len > 0)
+    {
+        *p++ = '?';
+        memcpy(p, r->args.data, r->args.len);
+        p += r->args.len;
+    }
+    *p = '\0';
+
+    memset(&context, 0, sizeof(context));
+    context.arg = r;
+    context.header_only = (r->method & NGX_HTTP_HEAD) ? 1 : 0;
+    context.url = url;
+    context.output_headers = fdfs_output_headers;
+    context.send_file = fdfs_send_file;
+    context.send_reply_chunk = fdfs_send_reply_chunk;
+    context.proxy_handler = ngx_http_proxy_handler;
+    context.server_port = ntohs(((struct sockaddr_in *)r->connection-> \
+                local_sockaddr)->sin_port);
+
+    if (r->headers_in.if_modified_since != NULL)
+    {
+        if (r->headers_in.if_modified_since->value.len < \
+                sizeof(context.if_modified_since))
+        {
+            memcpy(context.if_modified_since, \
+                    r->headers_in.if_modified_since->value.data, \
+                    r->headers_in.if_modified_since->value.len);
+        }
+
+        /*
+           ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
+           "if_modified_since: %s", context.if_modified_since);
+           */
+    }
+
+    if (r->headers_in.range != NULL)
+    {
+        char buff[64];
+        if (r->headers_in.range->value.len >= sizeof(buff))
+        {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
+                    "bad request, range length: %d exceeds buff " \
+                    "size: %d, range: %*s", \
+                    r->headers_in.range->value.len, \
+                    (int)sizeof(buff), \
+                    r->headers_in.range->value.len, \
+                    r->headers_in.range->value.data);
+            return NGX_HTTP_BAD_REQUEST;
+        }
+
+        memcpy(buff, r->headers_in.range->value.data, \
+                r->headers_in.range->value.len);
+        *(buff + r->headers_in.range->value.len) = '\0';
+        //ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "buff=%s", buff);
+        if (fdfs_parse_ranges(buff, &context) != 0)
+        {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
+                    "bad request, invalid range: %s", buff);
+            return NGX_HTTP_RANGE_NOT_SATISFIABLE;
+        }
+        context.if_range = true;
+
+        /*
+           ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
+           "if_range=%d, start=%d, end=%d", context.if_range, \
+           (int)context.range.start, (int)context.range.end);
+           */
+    }
+
+    /*
+       ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
+       "args=%*s, uri=%*s", r->args.len, r->args.data, \
+       r->uri.len, r->uri.data);
+       */
+
+    return fdfs_http_request_handler(&context);
+}
 
     static ngx_int_t
 ngx_http_proxy_input_filter_init(void *data)
@@ -1630,20 +1517,129 @@ ngx_http_proxy_non_buffered_chunked_filter(void *data, ssize_t bytes)
 }
 
 
-    static void
-ngx_http_proxy_abort_request(ngx_http_request_t *r)
+static char *ngx_http_fastdfs_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-            "abort http proxy request");
+    ngx_http_core_loc_conf_t *clcf = ngx_http_conf_get_module_loc_conf(cf, \
+            ngx_http_core_module);
 
+    fprintf(stderr, "ngx_http_fastdfs_set pid=%d\n", getpid());
+
+    /* register hanlder */
+    clcf->handler = ngx_http_fastdfs_handler;
+
+    return NGX_CONF_OK;
+}
+
+static ngx_int_t ngx_http_fastdfs_process_init(ngx_cycle_t *cycle)
+{
+    int result;
+
+    fprintf(stderr, "ngx_http_fastdfs_process_init pid=%d\n", getpid());
+    // do some init here
+    if ((result=fdfs_mod_init()) != 0)
+    {
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
+
+static void ngx_http_fastdfs_process_exit(ngx_cycle_t *cycle)
+{
+    fprintf(stderr, "ngx_http_fastdfs_process_exit pid=%d\n", getpid());
     return;
 }
 
-
-    static void
-ngx_http_proxy_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
+static void *ngx_http_fastdfs_create_loc_conf(ngx_conf_t *cf)
 {
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-            "finalize http proxy request");
-    return;
+    ngx_http_fastdfs_loc_conf_t  *conf;
+
+    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_fastdfs_loc_conf_t));
+    if (conf == NULL) {
+        return NULL;
+    }
+
+    conf->upstream.connect_timeout = NGX_CONF_UNSET_MSEC;
+    conf->upstream.send_timeout = NGX_CONF_UNSET_MSEC;
+    conf->upstream.read_timeout = NGX_CONF_UNSET_MSEC;
+
+    conf->upstream.buffer_size = NGX_CONF_UNSET_SIZE;
+
+    conf->upstream.hide_headers = NGX_CONF_UNSET_PTR;
+    conf->upstream.pass_headers = NGX_CONF_UNSET_PTR;
+
+    /* the hardcoded values */
+    conf->upstream.cyclic_temp_file = 0;
+    conf->upstream.buffering = 0;
+    conf->upstream.ignore_client_abort = 0;
+    conf->upstream.send_lowat = 0;
+    conf->upstream.bufs.num = 0;
+    conf->upstream.busy_buffers_size = 0;
+    conf->upstream.max_temp_file_size = 0;
+    conf->upstream.temp_file_write_size = 0;
+    conf->upstream.intercept_errors = 1;
+    conf->upstream.intercept_404 = 1;
+    conf->upstream.pass_request_headers = 0;
+    conf->upstream.pass_request_body = 0;
+
+    conf->headers_hash_max_size = NGX_CONF_UNSET_UINT;
+    conf->headers_hash_bucket_size = NGX_CONF_UNSET_UINT;
+
+    return conf;
+}
+
+static char * ngx_http_fastdfs_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
+{
+    ngx_hash_init_t             hash;
+    ngx_http_fastdfs_loc_conf_t *prev = parent;
+    ngx_http_fastdfs_loc_conf_t *conf = child;
+
+    ngx_conf_merge_msec_value(conf->upstream.connect_timeout,
+            prev->upstream.connect_timeout, 60000);
+
+    ngx_conf_merge_msec_value(conf->upstream.send_timeout,
+            prev->upstream.send_timeout, 60000);
+
+    ngx_conf_merge_msec_value(conf->upstream.read_timeout,
+            prev->upstream.read_timeout, 60000);
+
+    ngx_conf_merge_size_value(conf->upstream.buffer_size,
+            prev->upstream.buffer_size,
+            (size_t) ngx_pagesize);
+
+    ngx_conf_merge_bitmask_value(conf->upstream.next_upstream,
+            prev->upstream.next_upstream,
+            (NGX_CONF_BITMASK_SET
+             |NGX_HTTP_UPSTREAM_FT_ERROR
+             |NGX_HTTP_UPSTREAM_FT_TIMEOUT));
+
+    if (conf->upstream.next_upstream & NGX_HTTP_UPSTREAM_FT_OFF) {
+        conf->upstream.next_upstream = NGX_CONF_BITMASK_SET
+            |NGX_HTTP_UPSTREAM_FT_OFF;
+    }
+
+    if (conf->upstream.upstream == NULL) {
+        conf->upstream.upstream = prev->upstream.upstream;
+    }
+
+    ngx_conf_merge_uint_value(conf->headers_hash_max_size,
+            prev->headers_hash_max_size, 512);
+
+    ngx_conf_merge_uint_value(conf->headers_hash_bucket_size,
+            prev->headers_hash_bucket_size, 64);
+    conf->headers_hash_bucket_size = ngx_align(conf->headers_hash_bucket_size,
+            ngx_cacheline_size);
+
+    hash.max_size = conf->headers_hash_max_size;
+    hash.bucket_size = conf->headers_hash_bucket_size;
+    hash.name = "proxy_headers_hash";
+
+    if (ngx_http_upstream_hide_headers_hash(cf, &conf->upstream,
+                &prev->upstream, ngx_http_proxy_hide_headers, &hash)
+            != NGX_OK)
+    {
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
 }
